@@ -1,0 +1,282 @@
+// Prisma Schema for Pharmacy Management System
+// Algions AI Labs Assessment
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  PHARMACIST
+  CASHIER
+}
+
+enum MovementType {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+  RETURN
+  EXPIRED_DISPOSAL
+}
+
+enum AdjustmentType {
+  DAMAGE
+  EXPIRY_REMOVAL
+  COUNT_CORRECTION
+  CUSTOMER_RETURN
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+}
+
+enum SaleStatus {
+  COMPLETED
+  REFUNDED
+  CANCELLED
+}
+
+enum PurchaseStatus {
+  RECEIVED
+  PENDING
+  CANCELLED
+}
+
+model User {
+  id           String        @id @default(uuid())
+  name         String
+  email        String        @unique
+  passwordHash String
+  role         Role          @default(CASHIER)
+  phone        String?
+  isActive     Boolean       @default(true)
+  sales        Sale[]
+  purchases    Purchase[]
+  adjustments  StockAdjustment[]
+  movements    StockMovement[]
+  auditLogs    AuditLog[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Category {
+  id          String     @id @default(uuid())
+  name        String     @unique
+  description String?
+  medicines   Medicine[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Supplier {
+  id            String     @id @default(uuid())
+  name          String
+  contactPerson String?
+  email         String?
+  phone         String
+  address       String?
+  gstin         String?
+  isActive      Boolean    @default(true)
+  purchases     Purchase[]
+  batches       Batch[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+model Medicine {
+  id                   String            @id @default(uuid())
+  name                 String
+  genericName          String?
+  sku                  String            @unique
+  barcode              String?
+  categoryId           String
+  category             Category          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  description          String?
+  dosageForm           String            // Tablet, Capsule, Syrup, Injection, Ointment, Drops
+  strength             String?           // e.g. 500mg, 10ml, 250mg/5ml
+  unit                 String            @default("Unit") // Strip, Bottle, Box, Vial
+  minStockLevel        Int               @default(20)
+  requiresPrescription Boolean           @default(false)
+  location             String?           // Shelf / Rack A-1
+  totalStock           Int               @default(0)
+  isActive             Boolean           @default(true)
+  batches              Batch[]
+  saleItems            SaleItem[]
+  purchaseItems        PurchaseItem[]
+  movements            StockMovement[]
+  adjustments          StockAdjustment[]
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  @@index([name])
+  @@index([categoryId])
+  @@index([sku])
+}
+
+model Batch {
+  id                String            @id @default(uuid())
+  batchNumber       String
+  medicineId        String
+  medicine          Medicine          @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  supplierId        String?
+  supplier          Supplier?         @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  initialQuantity   Int
+  quantity          Int               // Current stock in this batch; must be >= 0
+  purchasePrice     Float             // Cost Price per unit
+  salePrice         Float             // Selling Price per unit
+  mrp               Float             // Maximum Retail Price
+  expiryDate        DateTime
+  manufacturingDate DateTime?
+  rackLocation      String?
+  isBlocked         Boolean           @default(false) // Manual quarantine or recalled
+  saleItems         SaleItem[]
+  movements         StockMovement[]
+  adjustments       StockAdjustment[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([medicineId, batchNumber])
+  @@index([expiryDate])
+  @@index([medicineId])
+  @@index([batchNumber])
+}
+
+model Purchase {
+  id            String         @id @default(uuid())
+  invoiceNumber String         @unique // Supplier bill number
+  supplierId    String
+  supplier      Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  totalAmount   Float
+  taxAmount     Float          @default(0)
+  status        PurchaseStatus @default(RECEIVED)
+  notes         String?
+  receivedDate  DateTime       @default(now())
+  receivedById  String
+  receivedBy    User           @relation(fields: [receivedById], references: [id], onDelete: Restrict)
+  items         PurchaseItem[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([invoiceNumber])
+  @@index([supplierId])
+}
+
+model PurchaseItem {
+  id            String   @id @default(uuid())
+  purchaseId    String
+  purchase      Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  medicineId    String
+  medicine      Medicine @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  batchNumber   String
+  quantity      Int
+  purchasePrice Float
+  salePrice     Float
+  mrp           Float
+  expiryDate    DateTime
+  subtotal      Float
+}
+
+model Sale {
+  id              String        @id @default(uuid())
+  invoiceNumber   String        @unique // e.g. "INV-2026-0001"
+  customerName    String?
+  customerPhone   String?
+  doctorName      String?
+  subtotal        Float
+  discountPercent Float         @default(0)
+  discountAmount  Float         @default(0)
+  taxRate         Float         @default(0) // e.g. 12% GST
+  taxAmount       Float         @default(0)
+  grandTotal      Float
+  paymentMethod   PaymentMethod @default(CASH)
+  status          SaleStatus    @default(COMPLETED)
+  cashierId       String
+  cashier         User          @relation(fields: [cashierId], references: [id], onDelete: Restrict)
+  notes           String?
+  items           SaleItem[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([invoiceNumber])
+  @@index([cashierId])
+  @@index([createdAt])
+}
+
+model SaleItem {
+  id                    String   @id @default(uuid())
+  saleId                String
+  sale                  Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  medicineId            String
+  medicine              Medicine @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  batchId               String
+  batch                 Batch    @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  quantity              Int
+  unitPrice             Float    // sale price at time of sale
+  purchasePriceSnapshot Float    // cost price snapshot for profit calculation
+  discount              Float    @default(0)
+  taxAmount             Float    @default(0)
+  subtotal              Float
+}
+
+model StockMovement {
+  id             String       @id @default(uuid())
+  type           MovementType
+  medicineId     String
+  medicine       Medicine     @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  batchId        String
+  batch          Batch        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  quantityChange Int          // +ve for additions/returns, -ve for sales/damage
+  balanceAfter   Int          // Batch stock level after this movement
+  referenceId    String?      // Sale ID, Purchase ID, Adjustment ID
+  reason         String?      // Required for adjustments/returns
+  performedById  String
+  performedBy    User         @relation(fields: [performedById], references: [id], onDelete: Restrict)
+  createdAt      DateTime     @default(now())
+
+  @@index([medicineId])
+  @@index([batchId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model StockAdjustment {
+  id             String         @id @default(uuid())
+  batchId        String
+  batch          Batch          @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  medicineId     String
+  medicine       Medicine       @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  type           AdjustmentType
+  quantityChange Int            // can be -ve (damage/expiry) or +ve (found stock/customer return)
+  reason         String         // MANDATORY reason
+  performedById  String
+  performedBy    User           @relation(fields: [performedById], references: [id], onDelete: Restrict)
+  notes          String?
+  createdAt      DateTime       @default(now())
+
+  @@index([batchId])
+  @@index([medicineId])
+  @@index([type])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String   // e.g. "AUTH_LOGIN", "SALE_CREATED", "STOCK_ADJUSTED"
+  entityType String   // "Sale", "Batch", "StockAdjustment", etc.
+  entityId   String?
+  details    String?  // JSON string of details
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}

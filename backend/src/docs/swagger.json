@@ -1,0 +1,240 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Pharmacy Management System API",
+    "version": "1.0.0",
+    "description": "Enterprise-grade REST API for Pharmacy Management System - Algions AI Labs Assessment",
+    "contact": {
+      "name": "Full-Stack Development Candidate",
+      "email": "candidate@algions.assessment"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5000",
+      "description": "Local Development Server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Enter JWT token obtained from /api/auth/login"
+      }
+    },
+    "schemas": {
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "example": "admin@pharmacy.com" },
+          "password": { "type": "string", "example": "Admin@123" }
+        }
+      },
+      "SaleItem": {
+        "type": "object",
+        "required": ["medicineId", "quantity"],
+        "properties": {
+          "medicineId": { "type": "string", "format": "uuid" },
+          "batchId": { "type": "string", "format": "uuid", "description": "Optional: FEFO auto-allocated if omitted" },
+          "quantity": { "type": "integer", "example": 2 },
+          "discount": { "type": "number", "example": 0 }
+        }
+      },
+      "CreateSaleRequest": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "customerName": { "type": "string", "example": "John Doe" },
+          "customerPhone": { "type": "string", "example": "+91-9876500000" },
+          "doctorName": { "type": "string", "example": "Dr. Mehta" },
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SaleItem" }
+          },
+          "discountPercent": { "type": "number", "example": 5.0 },
+          "taxRate": { "type": "number", "example": 12.0 },
+          "paymentMethod": { "type": "string", "enum": ["CASH", "CARD", "UPI"], "example": "CASH" },
+          "notes": { "type": "string", "example": "Prescription verified" }
+        }
+      },
+      "StockAdjustmentRequest": {
+        "type": "object",
+        "required": ["batchId", "type", "quantityChange", "reason"],
+        "properties": {
+          "batchId": { "type": "string", "format": "uuid" },
+          "type": { "type": "string", "enum": ["DAMAGE", "EXPIRY_REMOVAL", "COUNT_CORRECTION", "CUSTOMER_RETURN"] },
+          "quantityChange": { "type": "integer", "example": -5 },
+          "reason": { "type": "string", "example": "Vials broken during shelf reorganization" },
+          "notes": { "type": "string", "example": "Reported to inventory supervisor" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "summary": "Authenticate user and receive JWT token",
+        "tags": ["Authentication"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } }
+          }
+        },
+        "responses": {
+          "200": { "description": "Login successful returning token and user role profile" },
+          "401": { "description": "Invalid credentials" }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "summary": "Get authenticated user profile",
+        "tags": ["Authentication"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "User profile" }
+        }
+      }
+    },
+    "/api/medicines": {
+      "get": {
+        "summary": "List medicines with search, category and stock filters",
+        "tags": ["Medicines"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "name": "categoryId", "in": "query", "schema": { "type": "string" } },
+          { "name": "stockFilter", "in": "query", "schema": { "type": "string", "enum": ["all", "low_stock", "out_of_stock", "in_stock"] } },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } }
+        ],
+        "responses": { "200": { "description": "Paginated medicine catalogue" } }
+      },
+      "post": {
+        "summary": "Create new medicine (Admin / Pharmacist)",
+        "tags": ["Medicines"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "Medicine created" } }
+      }
+    },
+    "/api/batches": {
+      "get": {
+        "summary": "List inventory batches with expiry status",
+        "tags": ["Batches & Inventory"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "medicineId", "in": "query", "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["all", "valid", "expired", "near_expiry"] } },
+          { "name": "search", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "List of batches sorted by FEFO" } }
+      }
+    },
+    "/api/batches/{id}/toggle-block": {
+      "patch": {
+        "summary": "Quarantine / Unblock batch (Admin / Pharmacist)",
+        "tags": ["Batches & Inventory"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Batch quarantine status toggled" } }
+      }
+    },
+    "/api/sales": {
+      "get": {
+        "summary": "List sales invoices with filters",
+        "tags": ["Sales & POS"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Paginated sales history" } }
+      },
+      "post": {
+        "summary": "Process new sale (Acceptance Test #1 & #2: FEFO deduction, Expired batch blocking, Atomic transaction)",
+        "tags": ["Sales & POS"],
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateSaleRequest" } }
+          }
+        },
+        "responses": {
+          "201": { "description": "Sale completed, invoice generated, stock deducted" },
+          "400": { "description": "Expired batch or insufficient stock rejection" }
+        }
+      }
+    },
+    "/api/stock": {
+      "post": {
+        "summary": "Adjust stock with mandatory reason (Acceptance Test #4: Auditable, non-negative stock guarantee)",
+        "tags": ["Stock Adjustments & Returns"],
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/StockAdjustmentRequest" } }
+          }
+        },
+        "responses": {
+          "201": { "description": "Adjustment applied and stock movement ledger updated" },
+          "400": { "description": "Missing reason or negative stock violation" }
+        }
+      }
+    },
+    "/api/stock/movements": {
+      "get": {
+        "summary": "View immutable stock movement ledger",
+        "tags": ["Stock Adjustments & Returns"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Paginated stock movements" } }
+      }
+    },
+    "/api/reports/reconciliation": {
+      "get": {
+        "summary": "Stock Reconciliation Report (Acceptance Test #5: Opening + Purchases - Sales + Returns ± Adjustments = Closing Stock)",
+        "tags": ["Reports & Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "medicineId", "in": "query", "schema": { "type": "string" } },
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" } }
+        ],
+        "responses": { "200": { "description": "Full mathematical reconciliation matrix with zero variance proof" } }
+      }
+    },
+    "/api/reports/expiry": {
+      "get": {
+        "summary": "Expiry report categorized into Expired, 30-day, 60-day, and 90-day risk buckets",
+        "tags": ["Reports & Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Expiry analytics and financial at-risk amounts" } }
+      }
+    },
+    "/api/reports/valuation": {
+      "get": {
+        "summary": "Stock valuation report at cost and retail price with potential margins",
+        "tags": ["Reports & Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Valuation summary and category breakdown" } }
+      }
+    },
+    "/api/reports/sales": {
+      "get": {
+        "summary": "Sales revenue and profit margin report with top selling medicines",
+        "tags": ["Reports & Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Financial sales metrics" } }
+      }
+    },
+    "/api/reports/dashboard": {
+      "get": {
+        "summary": "Executive dashboard summary metrics",
+        "tags": ["Reports & Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Summary KPIs" } }
+      }
+    }
+  }
+}
